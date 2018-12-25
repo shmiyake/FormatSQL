@@ -1,0 +1,226 @@
+'■■■■■■■■■■■■■お約束
+Option Explicit
+
+'■■■■■■■■■■■■■実行処理
+SQL_Organize
+
+'■■■■■■■■■■■■■メイン関数定義
+Sub SQL_Organize()
+
+	Dim InFileName, OutFileName
+	InFileName = "sample.txt"
+	OutFileName = "sample_out.txt"
+	
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝配列定義
+
+'		~~~~~~~~~~~~~前の行につなげる単語
+	Dim list_line_continue
+	list_line_continue = Array( _
+	"DISTINCT", "OF", "AS", "AND", "OR" _
+	)
+
+'		~~~~~~~~~~~~~新しい行を開始する単語
+	Dim list_line_init
+	list_line_init = Array( _
+	"SELECT", "FROM", "LEFT", "RIGHT", "INNER", "FULL", "CROSS", _
+	"WHERE", "GROUP", "HAVING", "ORDER", "UNION", "SET", "VALUES", _
+	"INSERT", "DELETE", "UPDATE", _
+	"OFFSET", "LIMIT", _
+	"ON", _
+	"CASE", "WHEN", "ELSE", "END", _
+	"FOR" _
+	)
+
+'		~~~~~~~~~~~~~インデントをクリアする単語
+	Dim list_indent_init
+	list_indent_init = Array( _
+	"SELECT", "FROM", "LEFT", "RIGHT", "INNER", "FULL", "CROSS", "WHERE", _
+	"GROUP", "HAVING", "ORDER", "UNION", "SET", "VALUES", _
+	"INSERT", "UPDATE", "DELETE", _
+	"OFFSET", "LIMIT", _
+	"FOR" _
+	)
+
+'		~~~~~~~~~~~~~現在行を終了する単語
+	Dim list_line_terminate
+	list_line_terminate = Array( _
+	"SELECT", "DISTINCT", "INSERT", "UPDATE", "DELETE", "BY", "FROM", _
+	"WHERE", _
+	"AND", "OR" _
+	)
+
+'		~~~~~~~~~~~~~次の行のインデントを増やす単語
+	Dim list_indent_plus
+	list_indent_plus = Array( _
+	"SELECT", "FROM", "LEFT", "RIGHT", "INNER", "FULL", "CROSS", "WHERE", _
+	"GROUP", "HAVING", "ORDER", "UNION", "SET", "VALUES", _
+	"INSERT", "UPDATE", "DELETE", _
+	"OFFSET", "LIMIT", _
+	"ON", _
+	"CASE" _
+	)
+
+'		~~~~~~~~~~~~~次の行のインデントを減らす単語
+	Dim list_indent_minus
+	list_indent_minus = Array( _
+	"END" _
+	)
+
+'		~~~~~~~~~~~~~大文字にする単語
+	Dim list_capitalize
+	list_capitalize = Array( _
+	"SELECT", "FROM", "LEFT", "RIGHT", "INNER", "FULL", "CROSS", "WHERE", _
+	"GROUP", "HAVING", "ORDER", "UNION", "SET", "VALUES", _
+	"INSERT", "UPDATE", "DELETE", _
+	"OFFSET", "LIMIT", _
+	"ON", "BY", _
+	"CASE", "WHEN", "ELSE", "END", "AND", "OR", _
+	"DISTINCT", "FOR", "OF", "IN", "EXISTS", _
+	"AS", "JOIN", "THEN", "ASC", "DESC" _
+	)
+
+
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝ファイル読み込み
+	Dim fso 'ファイルオブジェクト
+	Dim str_input '入力文字列
+	Set fso = CreateObject("Scripting.FileSystemObject")
+	With fso.GetFile(Left(WSH.ScriptFullName,Len(WSH.ScriptFullName) - Len(WSH.ScriptName)) & "\" & InFileName).OpenAsTextStream
+		str_input = .ReadAll
+		.Close
+	End With
+	
+	'	＝＝＝＝＝＝＝＝＝＝＝＝＝キーワードとカッコがつながっている場合は分離する
+	For i = 0 to Ubound(list_capitalize)
+		str_process = Replace(str_process, ")" & list_capitalize(i), ") " & list_capitalize(i))
+		str_process = Replace(str_process, "(" & list_capitalize(i), "( " & list_capitalize(i))
+		str_process = Replace(str_process, list_capitalize(i) & "(", list_capitalize(i) & " (")
+		str_process = Replace(str_process, list_capitalize(i) & ")", list_capitalize(i) & " )")
+	Next
+	
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝改行コードをCrLfに置換
+	Dim str_process '処理中文字列
+	str_process = Replace(str_input, vbLf, vbCrLf)
+	str_process = Replace(str_input, vbCrLf, " ")
+	str_process = Replace(str_process, vbTab, " ")
+
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝カンマの後に空白を入れて見やすくする
+	str_process = Replace(str_process, ",", ", ")
+
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝重複したスペースを1つにする
+	Dim SpaceReg
+	Set SpaceReg = New RegExp
+	SpaceReg.Pattern ="(\s)\1{1,}"
+	SpaceReg.IgnoreCase = True
+	SpaceReg.Global = True
+	'連続する複数のスペースをひとつにする
+	str_process = SpaceReg.Replace(str_process, " ")
+	Set SpaceReg = Nothing
+
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝カンマの前のスペースを削除する
+	str_process = Replace(str_process, " ,", ",")
+
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝書き込み用データ作成
+	Dim str_output
+	Dim flag_newline, flag_comment
+	Dim lines, words
+	Dim indent_level, nest_level
+	Dim NewLineReg
+	Set NewLineReg = New RegExp
+	NewLineReg.Pattern = "\n+$" '末尾の1個以上の改行
+	
+	str_output = ""
+	indent_level = 0
+	flag_newline = 1
+	flag_comment = 0
+	nest_level = 0
+	
+	lines = Split(str_process, vbCrLf)
+	
+	Dim i, j
+	For i = 0 to UBound(lines)
+		'コメントに関する文言を後から追加しよう
+		
+		'スペースで区切った単語単位に分ける
+		words = Split(lines(i), " ")
+		'改行
+		For j = 0 to UBound(words)
+			If UBound(Filter(list_line_continue, words(j))) <> -1 Then
+				'msgbox "words " & j & "番目: " &words(j) & "です" &Right(str_output, 2)
+				str_output = NewLineReg.Replace(str_output, "")
+				'If (Right(str_output, 1) = (Chr(13)+Chr(10))) Or (Right(str_output, 1) = Chr(13)) Then
+				'	str_output = Left(str_output, Len(str_output) - 1)
+				'	'msgbox "words " & j & "番目: " &words(j) & "です"
+				'End If
+			ElseIf UBound(Filter(list_line_init, words(j))) <> -1 Then
+				If flag_newline = 0 Then
+					str_output = str_output + vbLf
+					flag_newline = 1
+					'msgbox "words " & j & "番目: " &words(j) & "です"
+				End If
+			End If
+			
+			If UBound(Filter(list_indent_init, words(j))) <> -1 Then
+				indent_level = 0
+			End If
+			
+			If flag_newline = 1 Then
+				str_output = str_output + indent_string(nest_level + indent_level)
+				flag_newline = 0
+			Else
+				str_output = str_output + " "
+			End If
+			
+			If UBound(Filter(list_capitalize, words(j))) <> -1 Then
+				str_output = str_output + UCase(words(j))
+			Else
+				str_output = str_output + words(j)
+			End If
+			
+			nest_level = nest_level + word_count(words(j), "(") - word_count(words(j), ")")
+			
+			IF (Right(words(j),1)=",") or (UBound(Filter(list_line_terminate, words(j))) <> -1) Then
+				str_output = str_output + vbLf
+				flag_newline = 1
+				'msgbox "words " & j & "番目: " &words(j) & "です。最後の文字は:" & (Right(str_output,1)=vbLf) 
+			End If
+			
+			If UBound(Filter(list_indent_plus, words(j))) <> -1 Then
+				indent_level = indent_level + 1
+			End If
+			
+			If UBound(Filter(list_indent_minus, words(j))) <> -1 Then
+				indent_level = indent_level - 1
+			End If
+		Next
+	Next
+	str_output = Replace(str_output, vbLf, vbCrLf)
+
+'	＝＝＝＝＝＝＝＝＝＝＝＝＝全データ書き込み
+	With fso.CreateTextFile(Left(WSH.ScriptFullName,Len(WSH.ScriptFullName) - Len(WSH.ScriptName)) & "\" & OutFileName, True)
+		.Write str_output
+		.Close
+	End With
+	MsgBox "処理が終わりました"
+
+	Set fso = Nothing
+	Set NewLineReg = Nothing
+End Sub
+
+Function word_count(byVal buf, byVal word)
+    Dim l, cnt
+    cnt = 0
+    For l = 1 To Len(buf)
+        If Mid(buf, l, 1) = word Then cnt = cnt + 1
+    Next
+    word_count = cnt
+End Function
+
+Function indent_string(byVal nb)
+	Dim tmp, k
+	tmp = ""
+	For k = 1 To nb
+		tmp = tmp + vbTab
+	Next
+	indent_string = tmp
+End Function
+
